@@ -1,0 +1,174 @@
+# scripts/fetch_garmin.py
+import os, sys, json, time
+from datetime import datetime, timedelta, date
+import pandas as pd
+from sqlalchemy import text
+
+from utils.db import ENGINE  # uses DATABASE_URL from .env
+from garminconnect import Garmin
+
+START_DAYS = int(os.getenv("GARMIN_BACKFILL_DAYS", "45"))
+
+def login():
+    user = os.getenv("GARMIN_USERNAME")
+    pwd  = os.getenv("GARMIN_PASSWORD")
+    if not user or not pwd:
+        raise RuntimeError("Set GARMIN_USERNAME and GARMIN_PASSWORD in .env")
+    g = Garmin(user, pwd)
+    g.login()
+    return g
+
+def to_date(d):
+    if isinstance(d, (datetime, date)):
+        return pd.to_datetime(d).date()
+    return pd.to_datetime(d).date()
+
+def fetch_activities(g, start_days=45):
+    start = (datetime.now() - timedelta(days=start_days)).date().isoformat()
+    # Pull most recent 400 activities (Garmin paginates; this is usually plenty)
+    acts = g.get_activities(0, 400)
+    rows = []
+    for a in acts:
+        try:
+            # basic fields; many more available in 'a'
+            start_ts = pd.to_datetime(a.get("startTimeGMT") or a.get("startTimeLocal"))
+            rows.append({
+                "activity_id": str(a["activityId"]),
+                "source": "garmin",
+                "ts": start_ts,
+                "type": a.get("activityType", {}).get("typeKey"),
+                "name": a.get("activityName"),
+                "distance_km": (a.get("distance", 0) or 0) / 1000.0,
+                "moving_time_sec": a.get("duration", 0) or 0,
+                "elapsed_time_sec": a.get("elapsedDuration", 0) or 0,
+                "avg_power": a.get("avgPower"),
+                "max_power": a.get("maxPower"),
+                "avg_hr": a.get("averageHR"),
+                "max_hr": a.get("maxHR"),
+                "elevation_gain_m": a.get("elevationGain", 0),
+                "calories": a.get("calories"),
+                "tss": None,    # Garmin doesn't give TSS; we can estimate in-app
+                "ifactor": None,
+                "ftp": None,
+            })
+        except Exception as e:
+            print("Skip activity due to parse error:", e)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("ts")
+        # keep only activities newer than our window
+        df = df[df["ts"].dt.date >= pd.to_datetime(start).date()]
+    return df
+
+def fetch_daily_metrics(g, start_days=90):
+    start = (datetime.now() - timedelta(days=start_days)).date()
+    end   = datetime.now().date()
+    dates = pd.date_range(start, end, freq="D")
+    rows = []
+    for d in dates:
+        d_str = d.strftime("%Y-%m-%d")
+        # Sleep summary
+        sleep = None
+        try:
+            sleep = g.get_sleep_data(d_str)
+        except Exception:
+            pass
+        sleep_min = None
+        if sleep and isinstance(sleep, dict):
+            # minutesAsleep in some payloads, or sum sleep levels
+            sleep_min = sleep.get("dailySleepDTO", {}).get("sleepTimeInMinutes")
+
+        # Resting HR
+        rhr = None
+        try:
+            whr = g.get_heart_rates(d_str)
+            # Garmin resting HR appears in wellness summary too:
+            wellness = g.get_wellness(d_str)
+            rhr = wellness.get("restingHeartRate") if isinstance(wellness, dict) else None
+        except Exception:
+            pass
+
+        # HRV (if available via API for your account/region)
+        hrv_ms = None
+        try:
+            # Some accounts have get_hrv_data; if not, keep None
+            hrv = g.get_hrv_data(d_str)
+            if isinstance(hrv, dict):
+                # nightly average in ms if provided; fallbacks vary
+                hrv_ms = hrv.get("hrvSummary", {}).get("lastNightAvg")
+        except Exception:
+            pass
+
+        # VO2max (if available)
+        vo2 = None
+        try:
+            stats = g.get_user_summary(d_str)
+            vo2 = stats.get("vo2Max", None) if isinstance(stats, dict) else None
+        except Exception:
+            pass
+
+        rows.append({
+            "date": d.date(),
+            "rhr": rhr,
+            "hrv_ms": hrv_ms,
+            "sleep_duration_min": sleep_min,
+            "sleep_score": None,
+            "body_battery": None,
+            "vo2max": vo2,
+            "weight_kg": None,      # prefer Apple Health upload for weight
+            "body_fat_pct": None,   # prefer Apple Health upload for body comp
+            "pulse_wave_velocity_ms": None
+        })
+
+    return pd.DataFrame(rows)
+
+def upsert_df(df: pd.DataFrame, table: str, unique_cols: list[str]):
+    if df.empty:
+        return 0
+    with ENGINE.begin() as conn:
+        # Create temp table
+        tmp = f"{table}_tmp_ingest"
+        df.to_sql(tmp, con=conn, if_exists="replace", index=False)
+        cols = ", ".join(df.columns)
+        updates = ", ".join([f"{c}=EXCLUDED.{c}" for c in df.columns if c not in unique_cols])
+        unique_cols_sql = ", ".join(unique_cols)
+        sql = text(f"""
+            insert into {table} ({cols})
+            select {cols} from {tmp}
+            on conflict ({unique_cols_sql}) do update set {updates};
+            drop table {tmp};
+        """)
+        conn.execute(sql)
+    return len(df)
+
+if __name__ == "__main__":
+    g = login()
+
+    # Activities → public.activities (unique: activity_id)
+    acts = fetch_activities(g, START_DAYS)
+    if not acts.empty:
+        # map to our schema columns exactly
+        acts["athlete_id"] = None   # fill later when we add auth
+        cols = ["athlete_id","source","activity_id","ts","type","name","distance_km",
+                "moving_time_sec","elapsed_time_sec","avg_power","max_power","avg_hr",
+                "max_hr","elevation_gain_m","calories","tss","ifactor","ftp"]
+        acts = acts[cols]
+        upsert_df(acts, "public.activities", ["activity_id"])
+        print(f"Upserted {len(acts)} activities from Garmin.")
+    else:
+        print("No activities fetched.")
+
+    # Daily metrics → public.daily_metrics (unique: date per athlete)
+    dm = fetch_daily_metrics(g, 90)
+    if not dm.empty:
+        dm["athlete_id"] = None  # fill when auth is added
+        cols_dm = ["athlete_id","date","rhr","hrv_ms","sleep_duration_min","sleep_score",
+                   "body_battery","vo2max","weight_kg","body_fat_pct","pulse_wave_velocity_ms"]
+        dm = dm[cols_dm]
+        upsert_df(dm, "public.daily_metrics", ["athlete_id","date"])
+        print(f"Upserted {len(dm)} daily metric rows from Garmin.")
+    else:
+        print("No daily metrics fetched.")
+mkdir -p scripts
+nano scripts/fetch_garmin.py
+
