@@ -2,9 +2,8 @@ streamlit>=1.36
 pandas>=2.0
 numpy>=1.25
 sqlalchemy>=2.0
-psycopg2-binary>=2.9
+psycopg[binary]==3.2.10
 python-dotenv>=1.0
+garminconnect==0.2.7
+pyarrow>=7.0
 requests>=2.31
-plotly>=5.19
-lxml>=5.2
-garminconnect>=0.2.7
