@@ -1,13 +1,15 @@
 import os
-import pandas as pd
+import streamlit as st
 from sqlalchemy import create_engine
-from dotenv import load_dotenv
 
-load_dotenv()
-ENGINE = create_engine(os.getenv("DATABASE_URL"))
+def _get(k, default=None):
+    try:
+        return st.secrets[k]
+    except Exception:
+        return os.getenv(k, default)
 
-def df_to_sql(df: pd.DataFrame, table: str, if_exists="append"):
-    df.to_sql(table, con=ENGINE, index=False, if_exists=if_exists)
+DATABASE_URL = _get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL missing. Add it to Streamlit Secrets (cloud) or .env (local).")
 
-def read_sql(query: str) -> pd.DataFrame:
-    return pd.read_sql(query, ENGINE)
+ENGINE = create_engine(DATABASE_URL, pool_pre_ping=True)
