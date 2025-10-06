@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import text, select, func
 from sqlalchemy.orm import Session
 
+from app.config import CORS_ALLOW_ORIGINS
+from app.routers import dashboard_api, weather_api  # import routers only (include them after app init)
+
 from db import engine, SessionLocal
 from models import Base, Athlete, TrainingBlock
 
@@ -33,16 +36,26 @@ except Exception:
     BodyMetrics = None  # type: ignore
 
 
+# ---------------- App & Middleware ----------------
 app = FastAPI(title="Holistic Health & Training API", version="0.1")
 
 # CORS (dev-open)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Routers MUST be included after app is created
+app.include_router(dashboard_api.router)
+app.include_router(weather_api.router)
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "version": os.getenv("APP_VERSION", "0.1.0")}
+
 
 # Dev bootstrap (optional): create tables for known models
 if os.getenv("DEV_BOOTSTRAP", "0") == "1":
