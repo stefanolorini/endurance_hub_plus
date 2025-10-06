@@ -7,3 +7,7 @@ pydantic==1.10.*
 requests
 streamlit
 pandas
+
+python-multipart==0.0.9
+pandas==2.2.2
+streamlit==1.38.0
