@@ -65,25 +65,18 @@ def healthz():
 
 # Dev bootstrap (optional): create tables and seed demo athlete on startup
 if os.getenv("DEV_BOOTSTRAP", "0") == "1":
-    Base.metadata.create_all(bind=engine)
+    m.Base.metadata.create_all(bind=engine)
     with SessionLocal() as _db:
         try:
-            # ensure tables exist
-            insp = inspect(engine)
-            log.info(f"tables present at startup: {insp.get_table_names()}")
-
-            # seed athlete #1
-            a = _db.get(Athlete, 1)
+            a = _db.get(m.Athlete, 1)
             if not a:
-                a = Athlete(
+                a = m.Athlete(
                     id=1, name="Demo Athlete", sex="male", age=35,
                     height_cm=176.0, weight_kg=76.0, rhr=56, vo2max=50.0, ftp_w=250
                 )
-                _db.add(a)
-                _db.commit()
+                _db.add(a); _db.commit()
         except Exception as _e:
             log.error(f"demo seed failed: {type(_e).__name__}: {_e}")
-
 
 # ---------------- DB session ----------------
 def get_db():
