@@ -1,10 +1,14 @@
 import os
+import sqlalchemy
 import logging
 import zipfile
 import xml.etree.ElementTree as ET
 from sqlalchemy import text, select, func, inspect  
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
+
+import models                  
+from db import engine, SessionLocal, Base
 
 from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,8 +55,19 @@ app.add_middleware(
 
 @app.get("/debug/tables")
 def debug_tables():
-    insp = inspect(engine)
+    insp = sqlalchemy.inspect(engine)
     return {"tables": insp.get_table_names()}
+
+if os.getenv("DEV_BOOTSTRAP", "0") == "1":
+    print("[BOOTSTRAP] Creating tables...")
+    Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        from models import Athlete
+        if not db.query(Athlete).filter_by(id=1).first():
+            db.add(Athlete(id=1, name="Default Athlete"))
+            db.commit()
+            print("[BOOTSTRAP] Seeded Athlete(id=1)")
+    print("[BOOTSTRAP] Done.")
 
 # Routers MUST be included after app is created
 app.include_router(dashboard_api.router)
