@@ -1,50 +1,47 @@
 import os
-import sqlalchemy
 import logging
-import zipfile
-import xml.etree.ElementTree as ET
-from sqlalchemy import text, select, func, inspect  
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
-import models                  
-from db import engine, SessionLocal, Base
-
-from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sqlalchemy import text, select, func
 from sqlalchemy.orm import Session
+import zipfile
+import xml.etree.ElementTree as ET
 
-from app.config import CORS_ALLOW_ORIGINS
-from app.routers import dashboard_api, weather_api  # import routers only (include them after app init)
-
-from db import engine, SessionLocal
-from models import Base, Athlete, TrainingBlock
-
-log = logging.getLogger("uvicorn.error")
-
-# Optional models (ok if not present yet)
+# Optional tables (guarded imports)
 try:
     from models import Goal
 except Exception:
     Goal = None  # type: ignore
-
 try:
     from models import Activity
 except Exception:
     Activity = None  # type: ignore
-
 try:
     from models import BodyMetrics
 except Exception:
     BodyMetrics = None  # type: ignore
 
+import sqlalchemy
+from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy import text, select, func, inspect
+from sqlalchemy.orm import Session
 
-# ---------------- App & Middleware ----------------
+# --- our modules ---
+import models as m                            
+from db import engine, SessionLocal  
+from app.config import CORS_ALLOW_ORIGINS
+from app.routers import dashboard_api, weather_api
+
+# Import concrete models (but NOT Base) if you need them
+from models import Athlete, TrainingBlock
+
+log = logging.getLogger("uvicorn.error")
+
 app = FastAPI(title="Holistic Health & Training API", version="0.1")
 
-# CORS (dev-open)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOW_ORIGINS,
@@ -53,45 +50,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Debug: list tables
 @app.get("/debug/tables")
 def debug_tables():
     insp = sqlalchemy.inspect(engine)
     return {"tables": insp.get_table_names()}
 
-if os.getenv("DEV_BOOTSTRAP", "0") == "1":
-    print("[BOOTSTRAP] Creating tables...")
-    Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        from models import Athlete
-        if not db.query(Athlete).filter_by(id=1).first():
-            db.add(Athlete(id=1, name="Default Athlete"))
-            db.commit()
-            print("[BOOTSTRAP] Seeded Athlete(id=1)")
-    print("[BOOTSTRAP] Done.")
+# Bootstrap on startup (runs once when the server starts)
+@app.on_event("startup")
+def _bootstrap():
+    if os.getenv("DEV_BOOTSTRAP", "0") == "1":
+        print("[BOOTSTRAP] Creating tables...")
+        m.Base.metadata.create_all(bind=engine)
+        with SessionLocal() as db:
+            if not db.query(Athlete).filter_by(id=1).first():
+                db.add(Athlete(id=1, name="Default Athlete"))
+                db.commit()
+                print("[BOOTSTRAP] Seeded Athlete(id=1)")
+        print("[BOOTSTRAP] Done.")
 
-# Routers MUST be included after app is created
+# Routers AFTER bootstrap is defined
 app.include_router(dashboard_api.router)
 app.include_router(weather_api.router)
+
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "version": os.getenv("APP_VERSION", "0.1.0")}
 
-
-# Dev bootstrap (optional): create tables and seed demo athlete on startup
-if os.getenv("DEV_BOOTSTRAP", "0") == "1":
-    m.Base.metadata.create_all(bind=engine)
-    with SessionLocal() as _db:
-        try:
-            a = _db.get(m.Athlete, 1)
-            if not a:
-                a = m.Athlete(
-                    id=1, name="Demo Athlete", sex="male", age=35,
-                    height_cm=176.0, weight_kg=76.0, rhr=56, vo2max=50.0, ftp_w=250
-                )
-                _db.add(a); _db.commit()
-        except Exception as _e:
-            log.error(f"demo seed failed: {type(_e).__name__}: {_e}")
 
 # ---------------- DB session ----------------
 def get_db():
