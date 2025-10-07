@@ -69,6 +69,26 @@ def _bootstrap():
                 print("[BOOTSTRAP] Seeded Athlete(id=1)")
         print("[BOOTSTRAP] Done.")
 
+@app.get("/debug/env")
+def debug_env():
+    import os
+    return {
+        "DEV_BOOTSTRAP": os.getenv("DEV_BOOTSTRAP"),
+        "DATABASE_URL": str(engine.url),
+        "cwd": os.getcwd(),
+    }
+
+@app.post("/bootstrap")
+def bootstrap_now():
+    # force table creation + seed (no env var required)
+    m.Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        if not db.query(Athlete).filter_by(id=1).first():
+            db.add(Athlete(id=1, name="Default Athlete")); db.commit()
+    insp = sqlalchemy.inspect(engine)
+    return {"tables": insp.get_table_names()}
+
+
 # Routers AFTER bootstrap is defined
 app.include_router(dashboard_api.router)
 app.include_router(weather_api.router)
