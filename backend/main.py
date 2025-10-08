@@ -32,7 +32,6 @@ from sqlalchemy.orm import Session
 import models as m                            
 from db import engine, SessionLocal  
 from app.config import CORS_ALLOW_ORIGINS
-from app.routers import dashboard_api, weather_api
 
 # Import concrete models (but NOT Base) if you need them
 from models import Athlete, TrainingBlock
