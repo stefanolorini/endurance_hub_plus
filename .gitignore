@@ -3,3 +3,6 @@
 __pycache__/
 .DS_Store
 *.zip
+**/.streamlit/secrets.toml
+**/.streamlit/
+**/.venv/
