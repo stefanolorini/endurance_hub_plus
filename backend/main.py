@@ -2,8 +2,9 @@ import os
 import logging
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
-
+from app.routers import dashboard_api, weather_api
 from sqlalchemy.orm import Session
+
 import zipfile
 import xml.etree.ElementTree as ET
 
@@ -41,6 +42,14 @@ log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Holistic Health & Training API", version="0.1")
 
+ENABLE_DASHBOARD = os.getenv("ENABLE_DASHBOARD", "1") == "1"
+ENABLE_WEATHER   = os.getenv("ENABLE_WEATHER", "0") == "1"   # default OFF for safe mode
+
+if ENABLE_DASHBOARD:
+    app.include_router(dashboard_api.router)
+if ENABLE_WEATHER:
+    app.include_router(weather_api.router)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -49,6 +58,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 # Debug: list tables
 @app.get("/debug/tables")
