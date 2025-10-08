@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text, select, func, inspect
+from fastapi.responses import RedirectResponse
 
 # --- our modules ---
 import models as m                            
@@ -38,6 +39,11 @@ from models import Athlete, TrainingBlock
 log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Holistic Health & Training API", version="0.1")
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/docs", status_code=307)
+
 
 # Feature flags (safe boot)
 ENABLE_DASHBOARD = os.getenv("ENABLE_DASHBOARD", "1") == "1"
@@ -61,6 +67,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/docs", status_code=307)
 
 
 # Debug: list tables
