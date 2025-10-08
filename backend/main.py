@@ -26,7 +26,6 @@ from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text, select, func, inspect
-from sqlalchemy.orm import Session
 
 # --- our modules ---
 import models as m                            
@@ -102,10 +101,6 @@ def bootstrap_now():
     insp = sqlalchemy.inspect(engine)
     return {"tables": insp.get_table_names()}
 
-
-# Routers AFTER bootstrap is defined
-app.include_router(dashboard_api.router)
-app.include_router(weather_api.router)
 
 
 @app.get("/healthz")
@@ -900,19 +895,5 @@ async def apple_health_import(
 
     log.info(f"Apple import done: days={len(day_metrics)}, workouts={len(workouts)}")
     return {"ok": True, "metrics_days_imported": len(day_metrics), "workouts_imported": len(workouts)}
-@app.get("/debug/env")
-def debug_env():
-    return {
-        "DEV_BOOTSTRAP": os.getenv("DEV_BOOTSTRAP"),
-        "DATABASE_URL": str(engine.url),
-        "cwd": os.getcwd(),
-    }
 
-@app.post("/bootstrap")
-def bootstrap_now():
-    m.Base.metadata.create_all(bind=engine)
-    with SessionLocal() as db:
-        if not db.query(Athlete).filter_by(id=1).first():
-            db.add(Athlete(id=1, name="Default Athlete")); db.commit()
-    insp = sqlalchemy.inspect(engine)
-    return {"tables": insp.get_table_names()}
+
