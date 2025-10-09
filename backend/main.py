@@ -8,13 +8,18 @@ from typing import Any, Dict, List, Optional
 
 import sqlalchemy
 from fastapi import (
-    FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form, Request, Response
+    FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form, Request, Response, Header
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import text, select, func
 from sqlalchemy.orm import Session
+
+# -------- API key guard (Step 1) --------
+def require_api_key(x_api_key: str = Header(None)):
+    if x_api_key != os.getenv("API_KEY"):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 # -------- Optional tables (guarded imports) --------
 try:
@@ -67,7 +72,7 @@ app.add_middleware(
     allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"],  # covers x-api-key for Streamlit/Browser
 )
 
 # -------- Debug: list tables --------
@@ -89,8 +94,8 @@ def _bootstrap():
                 print("[BOOTSTRAP] Seeded Athlete(id=1)")
         print("[BOOTSTRAP] Done.")
 
-# -------- Debug env (remove or gate later) --------
-@app.get("/debug/env")
+# -------- Debug env (optionally gated) --------
+@app.get("/debug/env", dependencies=[Depends(require_api_key)])
 def debug_env():
     return {
         "DEV_BOOTSTRAP": os.getenv("DEV_BOOTSTRAP"),
@@ -98,8 +103,8 @@ def debug_env():
         "cwd": os.getcwd(),
     }
 
-# -------- Manual bootstrap endpoint --------
-@app.post("/bootstrap")
+# -------- Manual bootstrap endpoint (gated) --------
+@app.post("/bootstrap", dependencies=[Depends(require_api_key)])
 def bootstrap_now():
     m.Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
@@ -647,7 +652,7 @@ def get_nutrition_today(athlete_id: int, db: Session = Depends(get_db)) -> Dict[
     }
 
 # ---------------- Goals (basic) ----------------
-@app.post("/goals")
+@app.post("/goals", dependencies=[Depends(require_api_key)])
 def upsert_goals(payload: dict = Body(...), db: Session = Depends(get_db)):
     if Goal is None:
         raise HTTPException(status_code=501, detail="Goal model not available yet. Add it in models.py and restart.")
@@ -698,7 +703,7 @@ def get_goals(athlete_id: int, db: Session = Depends(get_db)):
     }
 
 # ---------------- Apple Health ZIP import ----------------
-@app.post("/apple_health/import")
+@app.post("/apple_health/import", dependencies=[Depends(require_api_key)])
 async def apple_health_import(
     athlete_id: int = Form(...),
     file: UploadFile = File(...),
