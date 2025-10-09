@@ -27,6 +27,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text, select, func, inspect
 from fastapi.responses import RedirectResponse
+from fastapi import Request, Response
+from fastapi.responses import RedirectResponse
 
 # --- our modules ---
 import models as m                            
@@ -66,6 +68,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+def root(request: Request):
+    # HEAD: respond OK (no body) so uptime checks are happy
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    # GET: send humans to interactive docs
+    return RedirectResponse("/docs", status_code=307)
+
 
 
 @app.get("/", include_in_schema=False)
