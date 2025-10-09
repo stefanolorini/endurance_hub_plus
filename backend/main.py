@@ -56,7 +56,8 @@ def root(request: Request):
 
 # -------- Feature flags (lazy import of routers) --------
 ENABLE_DASHBOARD = os.getenv("ENABLE_DASHBOARD", "1") == "1"
-ENABLE_WEATHER   = os.getenv("ENABLE_WEATHER", "0") == "1"  # default OFF
+ENABLE_WEATHER   = os.getenv("ENABLE_WEATHER",   "0") == "1"  # default OFF
+ENABLE_METRICS   = os.getenv("ENABLE_METRICS",   "1") == "1"  # default ON
 
 if ENABLE_DASHBOARD:
     from app.routers import dashboard_api
@@ -65,6 +66,10 @@ if ENABLE_DASHBOARD:
 if ENABLE_WEATHER:
     from app.routers import weather_api
     app.include_router(weather_api.router)
+
+if ENABLE_METRICS:
+    from app.routers import metrics_api
+    app.include_router(metrics_api.router)
 
 # -------- CORS --------
 app.add_middleware(
