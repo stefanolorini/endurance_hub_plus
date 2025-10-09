@@ -1,13 +1,22 @@
+# backend/main.py
 import os
 import logging
-from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
-from sqlalchemy.orm import Session
-
 import zipfile
 import xml.etree.ElementTree as ET
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
 
-# Optional tables (guarded imports)
+import sqlalchemy
+from fastapi import (
+    FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form, Request, Response
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+from sqlalchemy import text, select, func
+from sqlalchemy.orm import Session
+
+# -------- Optional tables (guarded imports) --------
 try:
     from models import Goal
 except Exception:
@@ -21,33 +30,26 @@ try:
 except Exception:
     BodyMetrics = None  # type: ignore
 
-import sqlalchemy
-from fastapi import FastAPI, HTTPException, Depends, Body, Query, File, UploadFile, Form
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from sqlalchemy import text, select, func, inspect
-from fastapi.responses import RedirectResponse
-from fastapi import Request, Response
-from fastapi.responses import RedirectResponse
-
-# --- our modules ---
-import models as m                            
-from db import engine, SessionLocal  
-from app.config import CORS_ALLOW_ORIGINS
-
-# Import concrete models (but NOT Base) if you need them
+# -------- Our modules --------
+import models as m
 from models import Athlete, TrainingBlock
+from db import engine, SessionLocal
+from app.config import CORS_ALLOW_ORIGINS
 
 log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Holistic Health & Training API", version="0.1")
 
-@app.get("/", include_in_schema=False)
-def root():
+# -------- Root (GET + HEAD) --------
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+def root(request: Request):
+    # HEAD: respond OK for uptime checks
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    # GET: send humans to interactive docs
     return RedirectResponse("/docs", status_code=307)
 
-
-# Feature flags (safe boot)
+# -------- Feature flags (lazy import of routers) --------
 ENABLE_DASHBOARD = os.getenv("ENABLE_DASHBOARD", "1") == "1"
 ENABLE_WEATHER   = os.getenv("ENABLE_WEATHER", "0") == "1"  # default OFF
 
@@ -59,8 +61,7 @@ if ENABLE_WEATHER:
     from app.routers import weather_api
     app.include_router(weather_api.router)
 
-
-# CORS
+# -------- CORS --------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOW_ORIGINS,
@@ -69,28 +70,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
-def root(request: Request):
-    # HEAD: respond OK (no body) so uptime checks are happy
-    if request.method == "HEAD":
-        return Response(status_code=200)
-    # GET: send humans to interactive docs
-    return RedirectResponse("/docs", status_code=307)
-
-
-
-@app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse("/docs", status_code=307)
-
-
-# Debug: list tables
+# -------- Debug: list tables --------
 @app.get("/debug/tables")
 def debug_tables():
     insp = sqlalchemy.inspect(engine)
     return {"tables": insp.get_table_names()}
 
-# Bootstrap on startup (runs once when the server starts)
+# -------- Bootstrap on startup (dev only) --------
 @app.on_event("startup")
 def _bootstrap():
     if os.getenv("DEV_BOOTSTRAP", "0") == "1":
@@ -103,33 +89,32 @@ def _bootstrap():
                 print("[BOOTSTRAP] Seeded Athlete(id=1)")
         print("[BOOTSTRAP] Done.")
 
+# -------- Debug env (remove or gate later) --------
 @app.get("/debug/env")
 def debug_env():
-    import os
     return {
         "DEV_BOOTSTRAP": os.getenv("DEV_BOOTSTRAP"),
         "DATABASE_URL": str(engine.url),
         "cwd": os.getcwd(),
     }
 
+# -------- Manual bootstrap endpoint --------
 @app.post("/bootstrap")
 def bootstrap_now():
-    # force table creation + seed (no env var required)
     m.Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         if not db.query(Athlete).filter_by(id=1).first():
-            db.add(Athlete(id=1, name="Default Athlete")); db.commit()
+            db.add(Athlete(id=1, name="Default Athlete"))
+            db.commit()
     insp = sqlalchemy.inspect(engine)
     return {"tables": insp.get_table_names()}
 
-
-
+# -------- Healthz --------
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "version": os.getenv("APP_VERSION", "0.1.0")}
 
-
-# ---------------- DB session ----------------
+# -------- DB session dep --------
 def get_db():
     db = SessionLocal()
     try:
@@ -137,16 +122,14 @@ def get_db():
     finally:
         db.close()
 
-
-# ---------------- Health ----------------
+# -------- Simple health check --------
 @app.get("/health")
 def health() -> Dict[str, str]:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     return {"status": "ok"}
 
-
-# ---------------- Athlete basic ----------------
+# ================= Athlete basic =================
 @app.get("/athlete/{athlete_id}")
 def get_athlete(athlete_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
     a = db.get(Athlete, athlete_id)
@@ -164,7 +147,6 @@ def get_athlete(athlete_id: int, db: Session = Depends(get_db)) -> Dict[str, Any
         "ftp_w": a.ftp_w,
     }
 
-
 @app.patch("/athlete/{athlete_id}")
 def update_athlete(athlete_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
     a = db.get(Athlete, athlete_id)
@@ -173,9 +155,9 @@ def update_athlete(athlete_id: int, payload: dict = Body(...), db: Session = Dep
     for k in ["ftp_w", "vo2max", "rhr", "weight_kg", "height_cm", "age"]:
         if k in payload and payload[k] is not None:
             setattr(a, k, payload[k])
-    db.commit(); db.refresh(a)
+    db.commit()
+    db.refresh(a)
     return {"ok": True, "athlete_id": a.id, "ftp_w": a.ftp_w, "vo2max": a.vo2max}
-
 
 # ================= Helpers: planning / sessions =================
 POWER_ZONE_TARGET_IF = {
@@ -356,7 +338,9 @@ def generate_week_plan(
             elif wd == 4:
                 plan.append(session_mobility(day))
             elif wd == 5:
-                plan.append(session_indoor_endurance(day, ftp) if indoor else session_long_endurance(day, 3.0, ftp))
+                plan.append(
+                    session_indoor_endurance(day, ftp) if indoor else session_long_endurance(day, 3.0, ftp)
+                )
             else:
                 if fatigue_7d >= 500:
                     s = session_endurance(day, 90, ftp)
@@ -366,8 +350,6 @@ def generate_week_plan(
                 else:
                     plan.append(session_threshold(day, ftp, (3, 10)))
     return plan
-# =============== /helpers ===============
-
 
 # ---------------- Plan Preview (free-text goal) ----------------
 class PlanRequest(BaseModel):
@@ -505,7 +487,7 @@ def _cycling_week_template(week_idx: int, ftp: Optional[float]) -> Dict:
     IF_map = {"Rest":0.0,"Z1-2":0.6,"Z2":0.65,"Tempo":0.80,"Sweet Spot":0.88,"Threshold":0.96,"VO2":1.05,"Gym":0.3}
     for s in sessions:
         IF = IF_map.get(s["intensity"], 0.65)
-        s["tss"] = 0 if s["duration_min"]==0 else estimate_tss(int(s["duration_min"]), IF)
+        s["tss"] = 0 if s["duration_min"] == 0 else estimate_tss(int(s["duration_min"]), IF)
         if ftp and s["intensity"] in ("Sweet Spot","Threshold","Tempo","Z2"):
             if s["intensity"] == "Sweet Spot":
                 s["target_watts"] = [round(0.88*ftp), round(0.92*ftp)]
@@ -519,11 +501,11 @@ def _cycling_week_template(week_idx: int, ftp: Optional[float]) -> Dict:
     return {"focus": focus, "sessions": sessions}
 
 def _generate_plan_for_you(db, athlete_id:int, goal_text:str, weeks:int, start:date) -> Dict:
-    m = _latest_metrics(db, athlete_id)
+    snap = _latest_metrics(db, athlete_id)
     plan_type = _infer_plan_type(goal_text)
     weeks = weeks or 6
-    ftp = m.get("ftp_w")
-    sex, age, height_cm, weight_kg = m.get("sex"), m.get("age"), m.get("height_cm"), m.get("weight_kg")
+    ftp = snap.get("ftp_w")
+    sex, age, height_cm, weight_kg = snap.get("sex"), snap.get("age"), snap.get("height_cm"), snap.get("weight_kg")
     if weight_kg is None:
         weight_kg = 75.0
 
@@ -544,7 +526,7 @@ def _generate_plan_for_you(db, athlete_id:int, goal_text:str, weeks:int, start:d
             "goal_text": goal_text,
             "weeks": weeks,
             "start_date": start.isoformat(),
-            "athlete_snapshot": {k: m.get(k) for k in ["weight_kg","bodyfat_pct","vo2max_mlkgmin","resting_hr_bpm","ftp_w","sex","age","height_cm"]}
+            "athlete_snapshot": {k: snap.get(k) for k in ["weight_kg","bodyfat_pct","vo2max_mlkgmin","resting_hr_bpm","ftp_w","sex","age","height_cm"]}
         },
         "blocks": blocks,
         "nutrition": {
@@ -561,7 +543,6 @@ def _generate_plan_for_you(db, athlete_id:int, goal_text:str, weeks:int, start:d
 def plan_preview(athlete_id:int, req: PlanRequest, db: Session = Depends(get_db)):
     start = req.start_date or date.today()
     return _generate_plan_for_you(db, athlete_id, req.goal_text, req.weeks or 6, start)
-
 
 # ---------------- Training plan snapshot ----------------
 @app.get("/training/plan")
@@ -621,7 +602,6 @@ def get_training_plan(
         "generated_at": start.isoformat(),
     }
 
-
 # ---------------- Activities ----------------
 @app.get("/activities/recent")
 def get_recent_activities(athlete_id: int) -> Dict[str, Any]:
@@ -642,9 +622,10 @@ def add_activity(payload: dict = Body(...), db: Session = Depends(get_db)):
         duration_min=payload.get("duration_min"),
         tss=payload.get("tss"),
     )
-    db.add(a); db.commit(); db.refresh(a)
+    db.add(a)
+    db.commit()
+    db.refresh(a)
     return {"ok": True, "id": a.id}
-
 
 # ---------------- Nutrition (simple targets) ----------------
 @app.get("/nutrition/today")
@@ -664,7 +645,6 @@ def get_nutrition_today(athlete_id: int, db: Session = Depends(get_db)) -> Dict[
         },
         "meals": [],
     }
-
 
 # ---------------- Goals (basic) ----------------
 @app.post("/goals")
@@ -686,7 +666,9 @@ def upsert_goals(payload: dict = Body(...), db: Session = Depends(get_db)):
         timeframe_weeks=payload.get("timeframe_weeks"),
         active=True,
     )
-    db.add(g); db.commit(); db.refresh(g)
+    db.add(g)
+    db.commit()
+    db.refresh(g)
     return {"ok": True, "goal_id": g.id}
 
 @app.get("/goals")
@@ -714,71 +696,6 @@ def get_goals(athlete_id: int, db: Session = Depends(get_db)):
             "created_at": g.created_at.isoformat() if getattr(g, "created_at", None) else None,
         },
     }
-
-
-# ---------------- Metrics / Latest ----------------
-@app.get("/metrics/latest")
-def get_metrics_latest(athlete_id: int, db: Session = Depends(get_db)):
-    if BodyMetrics is None:
-        raise HTTPException(status_code=501, detail="BodyMetrics model not available.")
-
-    def latest(field_name: str):
-        col = getattr(BodyMetrics, field_name)
-        row = (
-            db.execute(
-                select(BodyMetrics.date, col)
-                .where(BodyMetrics.athlete_id == athlete_id, col.is_not(None))
-                .order_by(BodyMetrics.date.desc())
-                .limit(1)
-            ).first()
-        )
-        return (row[0].isoformat(), row[1]) if row else (None, None)
-
-    ftp_row = (
-        db.execute(
-            select(BodyMetrics.date, BodyMetrics.ftp_w, BodyMetrics.ftp_source)
-            .where(BodyMetrics.athlete_id == athlete_id, BodyMetrics.ftp_w.is_not(None))
-            .order_by(BodyMetrics.date.desc())
-            .limit(1)
-        ).first()
-    )
-    if ftp_row:
-        ftp_d = ftp_row[0].isoformat()
-        f = ftp_row[1]
-        f_src = ftp_row[2] or "unknown"
-    else:
-        ftp_d, f, f_src = None, None, None
-
-    w_d, w   = latest("weight_kg")
-    bf_d, bf = latest("bodyfat_pct")
-    vo2_d, v = latest("vo2max_mlkgmin")
-    rhr_d, r = latest("resting_hr_bpm")
-
-    dates = [d for d in (w_d, bf_d, vo2_d, rhr_d, ftp_d) if d]
-    as_of = max(dates) if dates else None
-
-    return {
-        "athlete_id": athlete_id,
-        "as_of": as_of,
-        "metrics": {
-            "weight_kg": w,
-            "bodyfat_pct": bf,
-            "vo2max_mlkgmin": v,
-            "resting_hr_bpm": r,
-            "ftp_w": f,
-        },
-        "dates": {
-            "weight_kg": w_d,
-            "bodyfat_pct": bf_d,
-            "vo2max_mlkgmin": vo2_d,
-            "resting_hr_bpm": rhr_d,
-            "ftp_w": ftp_d,
-        },
-        "provenance": {
-            "ftp_w": {"source": f_src, "updated_at": ftp_d}
-        },
-    }
-
 
 # ---------------- Apple Health ZIP import ----------------
 @app.post("/apple_health/import")
@@ -916,5 +833,3 @@ async def apple_health_import(
 
     log.info(f"Apple import done: days={len(day_metrics)}, workouts={len(workouts)}")
     return {"ok": True, "metrics_days_imported": len(day_metrics), "workouts_imported": len(workouts)}
-
-
