@@ -12,19 +12,24 @@ async def dashboard_today(
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
     indoor: bool = Query(False),
-    x_api_key: Optional[str] = Header(None),  # maps to 'x-api-key' automatically
+    x_api_key: Optional[str] = Header(None),  # reads 'x-api-key' if provided
 ):
-    if x_api_key is not None and API_KEY and x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    # Only enforce if a non-empty header was sent
+    if API_KEY and x_api_key:
+        if x_api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API key")
 
+    # Use service key for internal calls (safe even when public GETs omit a key)
     headers = {"x-api-key": API_KEY} if API_KEY else {}
 
     async with httpx.AsyncClient(timeout=10.0) as client:
+        # metrics
         m = await client.get(f"{API_BASE_URL}/metrics/latest", params={"athlete_id": athlete_id}, headers=headers)
         m.raise_for_status()
         metrics = m.json() or {}
         met = metrics.get("metrics", {}) if isinstance(metrics, dict) else {}
 
+        # training plan (pick today's session)
         tp = await client.get(
             f"{API_BASE_URL}/training/plan",
             params={"athlete_id": athlete_id, "indoor": str(indoor).lower()},
@@ -33,18 +38,16 @@ async def dashboard_today(
         tp.raise_for_status()
         plan = tp.json() or {}
         today_str = str(date.today())
-        session = None
-        for s in (plan.get("microcycle") or []):
-            if s.get("date") == today_str:
-                session = s
-                break
+        session = next((s for s in (plan.get("microcycle") or []) if s.get("date") == today_str), None)
         if session is None and (plan.get("microcycle") or []):
             session = plan["microcycle"][0]
 
+        # nutrition
         n = await client.get(f"{API_BASE_URL}/nutrition/today", params={"athlete_id": athlete_id}, headers=headers)
         n.raise_for_status()
         nutrition = n.json()
 
+        # weather
         use_lat = lat if lat is not None else (met.get("home_lat") or DEFAULT_LAT)
         use_lon = lon if lon is not None else (met.get("home_lon") or DEFAULT_LON)
         w = await client.get(
