@@ -643,7 +643,8 @@ def get_nutrition_today(athlete_id: int, db: Session = Depends(get_db)) -> Dict[
     a = db.get(Athlete, athlete_id)
     if not a:
         raise HTTPException(status_code=404, detail="athlete_not_found")
-    kcal_target = round(30 * a.weight_kg)
+    weight = float(a.weight_kg) if a.weight_kg is not None else 75.0
+    kcal_target = round(30 * weight)
     return {
         "athlete_id": athlete_id,
         "date": date.today().isoformat(),
