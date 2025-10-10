@@ -650,9 +650,9 @@ def get_nutrition_today(athlete_id: int, db: Session = Depends(get_db)) -> Dict[
         "date": date.today().isoformat(),
         "targets": {
             "kcal": kcal_target,
-            "protein_g": round(1.6 * a.weight_kg),
-            "carbs_g": None,
-            "fat_g": None,
+            "protein_g": int(round(1.6 * weight)),
+            "carbs_g": max(0, int(round((kcal_target - ((int(round(1.6 * weight)) * 4) + (int(round(0.8 * weight)) * 9))) / 4))),
+            "fat_g": int(round(0.8 * weight)),
         },
         "meals": [],
     }
