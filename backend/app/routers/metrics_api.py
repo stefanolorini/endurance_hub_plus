@@ -28,14 +28,19 @@ def metrics_latest(athlete_id: int = Query(..., ge=1), db: Session = Depends(get
     if latest is None and a is None:
         raise HTTPException(status_code=404, detail="athlete_not_found")
 
+    def pick(bm: Optional[BodyMetrics], at: Optional[Athlete], bm_attr: str, a_attr: Optional[str] = None):
+        lv = getattr(bm, bm_attr) if (bm is not None and hasattr(bm, bm_attr)) else None
+        av = getattr(at, a_attr) if (at is not None and a_attr) else None
+        return lv if lv is not None else av
+
     return {
         "athlete_id": athlete_id,
         "date": (latest.date.isoformat() if latest else None),
         "metrics": {
-            "weight_kg": (latest.weight_kg if latest else (a.weight_kg if a else None)),
-            "bodyfat_pct": (latest.bodyfat_pct if latest else None),
-            "vo2max_mlkgmin": (latest.vo2max_mlkgmin if latest else (a.vo2max if a else None)),
-            "resting_hr_bpm": (latest.resting_hr_bpm if latest else (a.rhr if a else None)),
-            "ftp_w": (latest.ftp_w if latest else (a.ftp_w if a else None)),
+            "weight_kg":       pick(latest, a, "weight_kg", "weight_kg"),
+            "bodyfat_pct":     pick(latest, a, "bodyfat_pct", None),
+            "vo2max_mlkgmin":  pick(latest, a, "vo2max_mlkgmin", "vo2max"),
+            "resting_hr_bpm":  pick(latest, a, "resting_hr_bpm", "rhr"),
+            "ftp_w":           pick(latest, a, "ftp_w", "ftp_w"),
         },
     }
