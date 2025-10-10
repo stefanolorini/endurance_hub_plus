@@ -62,3 +62,52 @@ def metrics_latest(athlete_id: int = Query(..., ge=1), db: Session = Depends(get
             "ftp_w": ftp,
         },
     }
+
+from datetime import date, timedelta
+from typing import Optional, List, Dict
+from fastapi import Query
+
+@router.get("/history", include_in_schema=True)
+def metrics_history(
+    athlete_id: int = Query(..., ge=1),
+    days: int = Query(30, ge=1, le=3650),
+    fields: Optional[str] = Query(None, description="Comma-separated list of fields"),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns a time series of BodyMetrics for charts.
+    Defaults to the last `days` days; optionally use from_date/to_date.
+    """
+    if BodyMetrics is None:
+        raise HTTPException(status_code=501, detail="BodyMetrics model not available.")
+
+    start = from_date or (date.today() - timedelta(days=days - 1))
+    end = to_date or date.today()
+
+    rows = db.execute(
+        select(BodyMetrics)
+        .where(BodyMetrics.athlete_id == athlete_id)
+        .where(BodyMetrics.date >= start)
+        .where(BodyMetrics.date <= end)
+        .order_by(BodyMetrics.date.asc())
+    ).scalars().all()
+
+    allowed = ["weight_kg","bodyfat_pct","vo2max_mlkgmin","resting_hr_bpm","ftp_w"]
+    want: List[str] = [f.strip() for f in fields.split(",")] if fields else allowed
+    want = [f for f in want if f in allowed]
+
+    def pick(bm: BodyMetrics) -> Dict:
+        item = {"date": bm.date.isoformat()}
+        for f in want:
+            item[f] = getattr(bm, f)
+        return item
+
+    return {
+        "athlete_id": athlete_id,
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "fields": want,
+        "items": [pick(r) for r in rows],
+    }
