@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Query, Depends, HTTPException
+from typing import Optional, List, Dict, Tuple, Any
+from datetime import date, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from typing import Optional
 
 from db import SessionLocal
 from models import BodyMetrics, Athlete
@@ -38,7 +39,7 @@ def metrics_latest(athlete_id: int = Query(..., ge=1), db: Session = Depends(get
     if latest is None and a is None:
         raise HTTPException(status_code=404, detail="athlete_not_found")
 
-    # For each metric: prefer latest row value; else most recent non-null; else Athlete snapshot
+    # Prefer latest row values; else most-recent non-null in history; else Athlete snapshot
     _, w_val   = last_non_null(db, athlete_id, "weight_kg")
     _, bf_val  = last_non_null(db, athlete_id, "bodyfat_pct")
     _, vo2_val = last_non_null(db, athlete_id, "vo2max_mlkgmin")
@@ -63,10 +64,6 @@ def metrics_latest(athlete_id: int = Query(..., ge=1), db: Session = Depends(get
         },
     }
 
-from datetime import date, timedelta
-from typing import Optional, List, Dict
-from fastapi import Query
-
 @router.get("/history", include_in_schema=True)
 def metrics_history(
     athlete_id: int = Query(..., ge=1),
@@ -76,10 +73,6 @@ def metrics_history(
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns a time series of BodyMetrics for charts.
-    Defaults to the last `days` days; optionally use from_date/to_date.
-    """
     if BodyMetrics is None:
         raise HTTPException(status_code=501, detail="BodyMetrics model not available.")
 
@@ -98,8 +91,8 @@ def metrics_history(
     want: List[str] = [f.strip() for f in fields.split(",")] if fields else allowed
     want = [f for f in want if f in allowed]
 
-    def pick(bm: BodyMetrics) -> Dict:
-        item = {"date": bm.date.isoformat()}
+    def pick(bm: BodyMetrics) -> Dict[str, Any]:
+        item: Dict[str, Any] = {"date": bm.date.isoformat()}
         for f in want:
             item[f] = getattr(bm, f)
         return item
