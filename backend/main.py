@@ -844,3 +844,8 @@ async def apple_health_import(
 
     log.info(f"Apple import done: days={len(day_metrics)}, workouts={len(workouts)}")
     return {"ok": True, "metrics_days_imported": len(day_metrics), "workouts_imported": len(workouts)}
+# -------- Strava router (feature flag) --------
+ENABLE_STRAVA = os.getenv("ENABLE_STRAVA", "1") == "1"
+if ENABLE_STRAVA:
+    from app.routers import strava_api
+    app.include_router(strava_api.router)
