@@ -880,3 +880,16 @@ def debug_strava_env():
         "STRAVA_REFRESH_TOKEN": mask(os.getenv("STRAVA_REFRESH_TOKEN")),
         "STRAVA_ACCESS_TOKEN": mask(os.getenv("STRAVA_ACCESS_TOKEN")),
     }
+
+# ---------------- Activities list (verify Strava imports) ----------------
+from fastapi import Query
+from sqlalchemy import select
+@app.get("/activities/list")
+def list_activities(athlete_id: int, limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Activity).where(Activity.athlete_id == athlete_id)
+        .order_by(Activity.date.desc()).limit(limit)
+    ).scalars().all()
+    return {"athlete_id": athlete_id, "items": [
+        {"date": r.date.isoformat(), "sport": r.sport, "duration_min": r.duration_min, "tss": r.tss} for r in rows
+    ]}
