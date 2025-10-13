@@ -849,3 +849,18 @@ ENABLE_STRAVA = os.getenv("ENABLE_STRAVA", "1") == "1"
 if ENABLE_STRAVA:
     from app.routers import strava_api
     app.include_router(strava_api.router)
+
+# -------- Debug: Strava env presence (masked) --------
+@app.get("/debug/strava_env", dependencies=[Depends(require_api_key)])
+def debug_strava_env():
+    def mask(val):
+        if not val:
+            return None
+        return f"{len(val)} chars, endswith …{val[-4:]}"
+    return {
+        "ENABLE_STRAVA": os.getenv("ENABLE_STRAVA"),
+        "STRAVA_CLIENT_ID": mask(os.getenv("STRAVA_CLIENT_ID")),
+        "STRAVA_CLIENT_SECRET": mask(os.getenv("STRAVA_CLIENT_SECRET")),
+        "STRAVA_REFRESH_TOKEN": mask(os.getenv("STRAVA_REFRESH_TOKEN")),
+        "STRAVA_ACCESS_TOKEN": mask(os.getenv("STRAVA_ACCESS_TOKEN")),
+    }
