@@ -1,4 +1,4 @@
-from components.quicklog_section import render_quicklog_section\n# frontend_patient/app.py
+from components.quicklog_section import render_quicklog_section
 import os
 import json
 from datetime import date
