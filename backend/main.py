@@ -893,3 +893,17 @@ def list_activities(athlete_id: int, limit: int = Query(20, ge=1, le=200), db: S
     return {"athlete_id": athlete_id, "items": [
         {"date": r.date.isoformat(), "sport": r.sport, "duration_min": r.duration_min, "tss": r.tss} for r in rows
     ]}
+from sqlalchemy import text
+@app.get("/nutrition/logs")
+def nutrition_logs(athlete_id: int, days: int = 30, db: Session = Depends(get_db)):
+    start = date.today() - timedelta(days=days-1)
+    rows = db.execute(
+        text("""
+            SELECT date, kcal, protein_g, carbs_g, fat_g
+            FROM nutrition_logs
+            WHERE athlete_id = :aid AND date >= :start
+            ORDER BY date DESC
+        """),
+        {"aid": athlete_id, "start": start}
+    ).mappings().all()
+    return {"athlete_id": athlete_id, "items": [dict(r) for r in rows]}
