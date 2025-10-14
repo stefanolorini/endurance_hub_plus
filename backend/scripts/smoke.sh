@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 API="${API:-https://endurance-hub-plus.onrender.com}"
 
 check() {

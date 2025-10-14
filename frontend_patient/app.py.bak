@@ -7,8 +7,6 @@ from typing import Any, Dict, Optional
 import pandas as pd
 import requests
 import streamlit as st
-from components.overview_section import render_overview_section
-
 
 st.set_page_config(page_title="Endurance Hub — Patient", layout="wide")
 
@@ -69,11 +67,6 @@ with st.sidebar:
         st.caption(date.today().isoformat())
 
 st.title("Today")
-
-# --- Overview (activities + physiology + nutrition) ---
-athlete_id = st.session_state.get('athlete_id', 1)
-render_overview_section(athlete_id)
-
 TAB_TODAY, TAB_TRENDS, TAB_HELP = st.tabs(["Today", "Trends (soon)", "Help"])  
 
 # ------------------------------ Today Tab ------------------------------
