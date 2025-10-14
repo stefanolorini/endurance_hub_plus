@@ -104,3 +104,67 @@ def metrics_history(
         "fields": want,
         "items": [pick(r) for r in rows],
     }
+# ------------- Quick log (upsert daily metrics) -------------
+from typing import Optional
+from datetime import date
+from fastapi import Depends, HTTPException, Body, Header
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from db import SessionLocal
+from models import BodyMetrics, Athlete
+import os
+
+API_KEY = os.getenv("API_KEY", "")
+
+def _get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@router.post("/log")
+def metrics_log(
+    athlete_id: int,
+    payload: dict = Body(...),
+    x_api_key: Optional[str] = Header(None),
+    db: Session = Depends(_get_db),
+):
+    # simple key guard (avoid circular import of require_api_key)
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    d = date.fromisoformat(payload.get("date")) if payload.get("date") else date.today()
+    fields = ["weight_kg", "resting_hr_bpm", "vo2max_mlkgmin", "ftp_w"]
+    vals = {f: payload.get(f) for f in fields if payload.get(f) is not None}
+    if not vals:
+        raise HTTPException(status_code=400, detail="no_values_provided")
+
+    # upsert BodyMetrics
+    row = db.execute(
+        select(BodyMetrics).where(BodyMetrics.athlete_id == athlete_id, BodyMetrics.date == d)
+    ).scalars().first()
+    if row:
+        for k, v in vals.items():
+            setattr(row, k, v)
+    else:
+        row = BodyMetrics(athlete_id=athlete_id, date=d, **vals)
+        db.add(row)
+
+    # refresh Athlete snapshot with provided fields
+    a = db.get(Athlete, athlete_id)
+    if a:
+        if "ftp_w" in vals and vals["ftp_w"] is not None: a.ftp_w = vals["ftp_w"]
+        if "resting_hr_bpm" in vals and vals["resting_hr_bpm"] is not None: a.rhr = vals["resting_hr_bpm"]
+        if "vo2max_mlkgmin" in vals and vals["vo2max_mlkgmin"] is not None: a.vo2max = vals["vo2max_mlkgmin"]
+        if "weight_kg" in vals and vals["weight_kg"] is not None: a.weight_kg = vals["weight_kg"]
+
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "ok": True,
+        "athlete_id": athlete_id,
+        "date": d.isoformat(),
+        "metrics": {k: getattr(row, k) for k in fields},
+    }
