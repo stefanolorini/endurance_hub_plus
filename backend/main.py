@@ -907,3 +907,53 @@ def nutrition_logs(athlete_id: int, days: int = 30, db: Session = Depends(get_db
         {"aid": athlete_id, "start": start}
     ).mappings().all()
     return {"athlete_id": athlete_id, "items": [dict(r) for r in rows]}
+# ---------------- Metrics quick log (upsert) ----------------
+class MetricsLogPayload(BaseModel):
+    date: Optional[date] = None
+    weight_kg: Optional[float] = None
+    resting_hr_bpm: Optional[float] = None
+    vo2max_mlkgmin: Optional[float] = None
+    ftp_w: Optional[float] = None
+
+@app.post("/metrics/log", dependencies=[Depends(require_api_key)])
+def metrics_log(
+    athlete_id: int,
+    payload: MetricsLogPayload = Body(...),
+    db: Session = Depends(get_db),
+):
+    if BodyMetrics is None:
+        raise HTTPException(status_code=501, detail="BodyMetrics model not available.")
+    d = payload.date or date.today()
+
+    # upsert into BodyMetrics
+    row = db.execute(
+        select(BodyMetrics).where(BodyMetrics.athlete_id == athlete_id, BodyMetrics.date == d)
+    ).scalars().first()
+
+    fields = ["weight_kg", "resting_hr_bpm", "vo2max_mlkgmin", "ftp_w"]
+    if row:
+        for f in fields:
+            v = getattr(payload, f)
+            if v is not None:
+                setattr(row, f, v)
+    else:
+        vals = {f: getattr(payload, f) for f in fields if getattr(payload, f) is not None}
+        row = BodyMetrics(athlete_id=athlete_id, date=d, **vals)
+        db.add(row)
+
+    # also refresh Athlete snapshot (only write provided fields)
+    a = db.get(Athlete, athlete_id)
+    if a:
+        if payload.ftp_w is not None: a.ftp_w = payload.ftp_w
+        if payload.resting_hr_bpm is not None: a.rhr = payload.resting_hr_bpm
+        if payload.vo2max_mlkgmin is not None: a.vo2max = payload.vo2max_mlkgmin
+        if payload.weight_kg is not None: a.weight_kg = payload.weight_kg
+
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "athlete_id": athlete_id,
+        "date": d.isoformat(),
+        "metrics": {f: getattr(row, f) for f in fields},
+    }
