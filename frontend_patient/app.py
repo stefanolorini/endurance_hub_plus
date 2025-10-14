@@ -1,4 +1,4 @@
-# frontend_patient/app.py
+from components.quicklog_section import render_quicklog_section\n# frontend_patient/app.py
 import os
 import json
 from datetime import date
@@ -138,3 +138,4 @@ with TAB_TRENDS:
 with TAB_HELP:
     st.write("If something looks off, pull to refresh (sidebar) or try again later.")
     st.write("Contact your coach for goal updates or training changes.")
+\n\n\n# --- Quick Log (keep physiology fresh) ---\nathlete_id = st.session_state.get('athlete_id', 1)\nrender_quicklog_section(athlete_id)\n
