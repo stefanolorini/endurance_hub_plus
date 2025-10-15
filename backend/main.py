@@ -957,3 +957,35 @@ def metrics_log(
         "date": d.isoformat(),
         "metrics": {f: getattr(row, f) for f in fields},
     }
+import os, requests
+from fastapi import Query
+
+CRON_KEY = os.getenv("CRON_KEY", "")
+API_BASE_SELF = os.getenv("API_BASE_URL", "https://endurance-hub-plus.onrender.com")
+
+@app.get("/cron/strava_daily", include_in_schema=False)
+def cron_strava_daily(key: str = Query(...), days: int = 3):
+    if not CRON_KEY or key != CRON_KEY:
+        raise HTTPException(status_code=401, detail="unauthorized")
+# collect athlete IDs (fallback to [1] if model/table missing)
+    try:
+        with SessionLocal() as db:
+            ids = [r[0] for r in db.execute(select(Athlete.id)).all()]
+    except Exception:
+        ids = [1]
+
+    headers = {"x-api-key": os.getenv("API_KEY", "")}
+    out = []
+    for aid in ids:
+        try:
+            r = requests.post(
+                f"{API_BASE_SELF}/strava/import",
+                params={"athlete_id": aid, "after_days": days},
+                headers=headers,
+                timeout=60,
+            )
+            out.append({"athlete_id": aid, "status": r.status_code, "preview": r.text[:200]})
+        except Exception as e:
+            out.append({"athlete_id": aid, "error": str(e)})
+
+    return {"ok": True, "ran_for": ids, "results": out}
